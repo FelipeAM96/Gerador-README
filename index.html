@@ -1,0 +1,470 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gerador de Instruções de Entrega (README)</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f3f4f6; }
+        .spinner { border: 4px solid rgba(0,0,0,0.1); width: 36px; height: 36px; border-radius: 50%; border-left-color: #3b82f6; animation: spin 1s linear infinite; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+    </style>
+</head>
+<body class="text-gray-800 min-h-screen p-4 md:p-8">
+
+    <div class="max-w-4xl mx-auto">
+        <!-- Cabeçalho -->
+        <header class="bg-white rounded-xl shadow-sm p-6 mb-6 border-t-4 border-blue-600">
+            <h1 class="text-2xl font-bold text-gray-800 flex items-center gap-3">
+                <i class="fas fa-file-signature text-blue-600"></i>
+                Gerador de Instruções para Clientes (README)
+            </h1>
+            <p class="text-gray-600 mt-2">
+                Selecione a pasta raiz do projeto. O sistema agrupará os arquivos de suporte, traduzirá nomenclaturas complexas (ex: PSM, Orto, Bandas) e gerará um guia simples e direto.
+            </p>
+        </header>
+
+        <!-- Ação Principal -->
+        <div class="bg-white rounded-xl shadow-sm p-8 mb-6 text-center">
+            <input type="file" id="folderInput" webkitdirectory directory multiple class="hidden" />
+            
+            <button id="btnSelectFolder" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-4 px-8 rounded-lg shadow-lg transition-transform transform hover:scale-105 flex items-center justify-center gap-3 mx-auto text-lg w-full md:w-auto">
+                <i class="fas fa-folder-open text-xl"></i>
+                Selecionar Pasta Mãe do Projeto
+            </button>
+            <p class="text-sm text-gray-500 mt-3"><i class="fas fa-lock"></i> Processamento 100% local. Rápido e Seguro.</p>
+
+            <div id="loadingIndicator" class="hidden mt-6 flex flex-col items-center justify-center">
+                <div class="spinner mb-2"></div>
+                <p class="text-gray-600 font-medium">Analisando agrupamentos e gerando texto didático...</p>
+            </div>
+        </div>
+
+        <!-- Área de Resultados -->
+        <div id="resultArea" class="hidden">
+            <div class="bg-white rounded-xl shadow-sm p-6 mb-6">
+                <div class="flex flex-col md:flex-row justify-between items-center mb-4 gap-4">
+                    <h2 class="text-xl font-bold text-gray-800"><i class="fas fa-eye text-green-500 mr-2"></i> Pré-visualização das Instruções</h2>
+                    <div class="flex gap-3 w-full md:w-auto">
+                        <button id="btnDownloadTxt" class="flex-1 md:flex-none bg-gray-800 hover:bg-gray-900 text-white py-2 px-4 rounded font-medium flex items-center justify-center gap-2 transition-colors">
+                            <i class="fas fa-file-alt"></i> Baixar .TXT
+                        </button>
+                        <button id="btnDownloadPdf" class="flex-1 md:flex-none bg-red-600 hover:bg-red-700 text-white py-2 px-4 rounded font-medium flex items-center justify-center gap-2 transition-colors">
+                            <i class="fas fa-file-pdf"></i> Baixar .PDF
+                        </button>
+                    </div>
+                </div>
+                
+                <textarea id="previewText" class="w-full h-96 p-4 border border-gray-300 rounded-lg bg-gray-50 text-sm font-mono focus:ring-2 focus:ring-blue-500 focus:outline-none resize-y" spellcheck="false"></textarea>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const folderInput = document.getElementById('folderInput');
+        const btnSelectFolder = document.getElementById('btnSelectFolder');
+        const loadingIndicator = document.getElementById('loadingIndicator');
+        const resultArea = document.getElementById('resultArea');
+        const previewText = document.getElementById('previewText');
+        const btnDownloadTxt = document.getElementById('btnDownloadTxt');
+        const btnDownloadPdf = document.getElementById('btnDownloadPdf');
+
+        let generatedText = "";
+        let projectName = "Projeto"; // Variável para armazenar o nome da pasta mãe
+
+        btnSelectFolder.addEventListener('click', () => folderInput.click());
+        folderInput.addEventListener('change', handleFolderSelection);
+        btnDownloadTxt.addEventListener('click', downloadTxt);
+        btnDownloadPdf.addEventListener('click', downloadPdf);
+
+        function normalizeString(str) {
+            return str.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
+        }
+
+        async function handleFolderSelection(event) {
+            const files = event.target.files;
+            if (files.length === 0) return;
+
+            // Extrair o nome da pasta mãe para usar no nome do arquivo salvo
+            const firstFilePath = files[0].webkitRelativePath;
+            projectName = firstFilePath.split('/')[0] || "Projeto";
+
+            btnSelectFolder.classList.add('hidden');
+            loadingIndicator.classList.remove('hidden');
+            resultArea.classList.add('hidden');
+
+            setTimeout(() => processFiles(files), 100);
+        }
+
+        // Agrupa arquivos que possuem o mesmo nome base, ignorando variações Geo/UTM
+        function groupFiles(fileList) {
+            let groups = {};
+            fileList.forEach(f => {
+                const parts = f.name.split('.');
+                const ext = parts.length > 1 ? parts.pop().toLowerCase() : '';
+                const baseName = parts.join('.');
+                
+                // Cria uma chave que ignora Geo e UTM para agrupar as duas projeções no mesmo bloco
+                let key = baseName
+                    .replace(/\b(geo|utm(?:\s*\d{1,2}[a-z]?)?)\b/gi, '')
+                    .replace(/[-_]/g, ' ')
+                    .replace(/\s+/g, ' ')
+                    .trim()
+                    .toLowerCase();
+                
+                if (!groups[key]) {
+                    groups[key] = { 
+                        baseNames: new Set(),
+                        // Nome representativo limpo de marcações espaciais para não poluir o relatório
+                        representativeName: baseName.replace(/\b(geo|utm(?:\s*\d{1,2}[a-z]?)?)\b/gi, '').replace(/\s+/g, ' ').trim(), 
+                        exts: new Set(),
+                        crs: new Set(),
+                        subfolder: f.subfolder 
+                    };
+                }
+                groups[key].baseNames.add(baseName);
+                if (ext) groups[key].exts.add(ext);
+
+                // Identifica qual CRS este arquivo exato possui para avisar o cliente nas notas
+                let isGeo = /\bgeo\b/i.test(baseName);
+                let utmMatch = baseName.match(/\b(utm(?:\s*\d{1,2}[a-z]?)?)\b/i);
+
+                if (isGeo) groups[key].crs.add("Geográficas (Geo)");
+                if (utmMatch) groups[key].crs.add(utmMatch[1].toUpperCase());
+            });
+            
+            return Object.values(groups).map(g => ({
+                baseNames: Array.from(g.baseNames),
+                representativeName: g.representativeName,
+                exts: Array.from(g.exts),
+                crs: Array.from(g.crs),
+                subfolder: g.subfolder
+            }));
+        }
+
+        // Tradutor do nome do arquivo
+        function decodeFilename(name) {
+            let details = [];
+            let n = name.toLowerCase();
+
+            // Produtos Altimétricos e Específicos
+            if (n.includes("mdt")) details.push("Produto: Modelo Digital de Terreno (MDT) - Representa o relevo do solo nu.");
+            else if (n.includes("mds")) details.push("Produto: Modelo Digital de Superfície (MDS) - Inclui árvores, galpões e construções.");
+            
+            let cnMatch = name.match(/\bcn\s*(\d+(?:,\d+)?)\s*m\b/i) || name.match(/curvas?\s*de\s*n[íi]vel\s*(\d+(?:,\d+)?)\s*m/i);
+            if (cnMatch) details.push(`Produto: Curvas de Nível (Equidistância: ${cnMatch[1]} metros).`);
+            else if (/\bcn\b/i.test(name)) details.push("Produto: Curvas de Nível.");
+
+            if (/\bnp\b/i.test(name) || n.includes("nuvem de pontos")) details.push("Produto: Nuvem de Pontos (Representação 3D densa).");
+
+            // Satélites / Fontes
+            if (n.includes("worlddem neo")) details.push("Satélite/Fonte: WorldDEM Neo (Airbus)");
+            else if (n.includes("worlddem")) details.push("Satélite/Fonte: WorldDEM");
+            else if (n.includes("pleiades neo")) details.push("Satélite: Pléiades Neo");
+            else if (n.includes("pleiades") || n.includes("pléiades")) details.push("Satélite: Pléiades");
+            else if (n.includes("worldview")) details.push("Satélite: WorldView");
+            else if (n.includes("geoeye")) details.push("Satélite: GeoEye");
+            else if (n.includes("spot")) details.push("Satélite: SPOT");
+
+            // Resolução (ex: 30cm, 50cm, 1m, 5m)
+            let resMatch = name.match(/(\d+(?:,\d+)?\s*(?:cm|m(?:etros?)?))/i);
+            if (resMatch) details.push(`Resolução: ${resMatch[1].toLowerCase()}`);
+
+            // Data
+            let dateMatch = name.match(/(\d{2}-\d{2}-\d{4}|\d{4}-\d{2}-\d{2})/);
+            if (dateMatch) details.push(`Captura: ${dateMatch[1]}`);
+
+            // Tecnologias
+            if (n.includes("psm")) details.push("Tipo de Fusão: PSM (Pan-sharpened) - Mistura de banda alta resolução com cores.");
+            if (n.includes("orto")) details.push("Processo: Ortorretificada (Corrigida geograficamente para permitir medições precisas).");
+
+            // Datum
+            if (n.includes("sirgas 2000") || n.includes("sirgas2000")) details.push("Datum: SIRGAS 2000");
+            else if (n.includes("wgs 84") || n.includes("wgs84")) details.push("Datum: WGS 84");
+
+            // Dados radiométricos e bandas
+            let bitMatch = name.match(/(\d+)\s*bits?/i);
+            if (bitMatch) details.push(`Radiometria: ${bitMatch[1]} bits`);
+
+            let bandMatch = name.match(/(\d+)\s*bandas?/i);
+            if (bandMatch) details.push(`Bandas: ${bandMatch[1]} bandas de cor`);
+
+            // Cores e Contraste
+            if (n.includes("cores naturais")) details.push("Padrão de Cor: Cores Naturais (Visão real do olho humano).");
+            else if (n.includes("falsa cor")) details.push("Padrão de Cor: Falsa Cor (Usado para análise de vegetação, solo, etc).");
+
+            if (n.includes("com contraste")) details.push("Tratamento: Com Contraste (Cores melhoradas e prontas para uso visual/estético).");
+            else if (n.includes("sem contraste")) details.push("Tratamento: Sem Contraste (Cores puras, ideais para cálculos matemáticos em softwares).");
+
+            return details;
+        }
+
+        // Analisa o que o grupo de arquivos significa
+        function analyzeGroup(group) {
+            let descricao = "";
+            let software = "";
+            let notas = [];
+            let decoded = decodeFilename(group.representativeName);
+
+            const hasExt = (e) => group.exts.includes(e);
+            const subfolderLower = normalizeString(group.subfolder || "");
+
+            // Nota unificada sobre projeções disponíveis (Geo / UTM)
+            if (group.crs.length > 0) {
+                notas.push(`Projeções disponíveis neste conjunto: ${group.crs.join(" e ")}. (Escolha a que melhor se adapta ao seu projeto ou software).`);
+            }
+
+            // Lógica por tipo principal de arquivo
+            if (hasExt('shp')) {
+                descricao = "Vetor Geográfico (Shapefile). Contém geometria de áreas, linhas ou marcações.";
+                software = "QGIS, ArcGIS ou Civil 3D.";
+                notas.push("Atenção: Acompanha arquivos essenciais de suporte (como .shx, .dbf, .prj). Eles guardam as tabelas e coordenadas. Mantenha todos na mesma pasta!");
+            
+            } else if (hasExt('dwg') || hasExt('dxf')) {
+                descricao = "Desenho Técnico CAD.";
+                software = "AutoCAD, ZWCAD, Civil 3D.";
+                notas.push("Dica Importante: Para que o DWG carregue as imagens junto com o desenho, mantenha este arquivo SEMPRE na mesma pasta da imagem .TIF correspondente.");
+            
+            } else if (hasExt('tif') || hasExt('tiff') || hasExt('ecw') || hasExt('jp2')) {
+                descricao = "Imagem Matricial Georreferenciada (Satélite ou Aérea).";
+                software = "QGIS, ArcGIS, Global Mapper, Softwares CAD.";
+                if (hasExt('tfw') || hasExt('prj') || hasExt('xml') || hasExt('aux')) {
+                    notas.push("Atenção: Contém arquivos de metadados (.tfw, .prj, etc) que indicam ao software o local exato da imagem no planeta. Não os apague.");
+                }
+
+            } else if (hasExt('pdf')) {
+                if (group.baseName.toLowerCase().includes('metadado') || group.baseName.toLowerCase().includes('relatorio')) {
+                    descricao = "Documento Textual / Metadados (Informações técnicas sobre o voo/satélite).";
+                } else {
+                    descricao = "Carta Imagem ou Relatório (Documento em PDF pronto para visualizar e imprimir).";
+                }
+                software = "Leitor de PDF (Adobe) ou qualquer Navegador Web.";
+
+            } else if (hasExt('kmz') || hasExt('kml')) {
+                descricao = "Arquivo de Visualização Geográfica (Leve e rápido).";
+                software = "Google Earth (Basta dar dois cliques).";
+
+            } else if (hasExt('txt') || hasExt('xml')) {
+                descricao = "Metadados de Suporte (Informações de calibração ou texto).";
+                software = "Bloco de Notas.";
+            }
+
+            // Dicas de Subpastas
+            if (subfolderLower.includes('mds')) {
+                notas.push("Definição (MDS): Modelo Digital de Superfície. Representa a elevação incluindo tudo sobre a terra (árvores, galpões).");
+            } else if (subfolderLower.includes('mdt')) {
+                notas.push("Definição (MDT): Modelo Digital de Terreno. Relevo do solo nu, como se tudo que estivesse em cima fosse removido.");
+            } else if (subfolderLower.includes('curva') || subfolderLower.includes('nivel')) {
+                notas.push("Definição: Curvas de Nível. Representam a declividade e altimetria.");
+            } else if (subfolderLower.includes('nuvem')) {
+                notas.push("Definição: Nuvem de Pontos. Representação tridimensional de altíssima densidade.");
+            }
+
+            return { descricao, software, notas, decoded };
+        }
+
+        function processFiles(files) {
+            const projectData = { interesse: [], brutos: [], processados: [] };
+            const kwInteresse = "area de interesse";
+            const kwBrutos = "dados brutos";
+            const kwProcessados = "dados processados";
+
+            for (let i = 0; i < files.length; i++) {
+                const file = files[i];
+                if (file.name.startsWith('.')) continue;
+
+                const pathParts = file.webkitRelativePath.split('/');
+                let belongsTo = null;
+                let subFolderName = "";
+
+                for (let p = 1; p < pathParts.length - 1; p++) {
+                    const normPart = normalizeString(pathParts[p]);
+                    if (normPart.includes(kwInteresse)) belongsTo = 'interesse';
+                    else if (normPart.includes(kwBrutos)) belongsTo = 'brutos';
+                    else if (normPart.includes(kwProcessados)) {
+                        belongsTo = 'processados';
+                        if (p + 1 < pathParts.length - 1) subFolderName = pathParts[p+1];
+                    }
+                    if (belongsTo) break;
+                }
+
+                if (belongsTo) {
+                    projectData[belongsTo].push({ name: file.name, path: file.webkitRelativePath, subfolder: subFolderName });
+                }
+            }
+
+            generateReport(projectData);
+        }
+
+        function generateReport(data) {
+            let texto = "=======================================================\n";
+            texto += "        GUIA DO PROJETO - INSTRUÇÕES DE USO\n";
+            texto += "=======================================================\n\n";
+            texto += "Olá! Este documento foi criado para ajudar você a entender o que é cada arquivo entregue neste projeto de forma fácil e rápida.\n\n";
+
+            // ORDEM NOVA: 1. INTERESSE, 2. BRUTOS, 3. PROCESSADOS
+
+            // ------------------ 1. ÁREA DE INTERESSE ------------------
+            texto += "-------------------------------------------------------\n";
+            texto += " 1. ÁREA DE INTERESSE\n";
+            texto += "-------------------------------------------------------\n";
+            texto += "Contém o perímetro exato (polígono) que usamos como limite para buscar e processar as imagens.\n\n";
+            
+            if (data.interesse.length === 0) {
+                texto += "Nenhum arquivo encontrado nesta pasta.\n\n";
+            } else {
+                const groupsInteresse = groupFiles(data.interesse);
+                groupsInteresse.forEach(g => {
+                    let extStr = g.exts.map(e => `.${e}`).join(", ");
+                    texto += `[Arquivo] ${g.representativeName} (${extStr})\n`;
+                });
+                texto += "\n";
+            }
+
+            // ------------------ 2. DADOS BRUTOS ------------------
+            texto += "-------------------------------------------------------\n";
+            texto += " 2. DADOS BRUTOS\n";
+            texto += "-------------------------------------------------------\n";
+            texto += "Arquivos originais e metadados cruzs que vieram do satélite/sensor antes de passarem pelos nossos tratamentos.\n";
+            texto += "Importante: Se você não é um especialista que deseja refazer os processos do zero, PODE IGNORAR ESTA PASTA. Seu foco deve ser a pasta de 'Dados Processados'.\n\n";
+            
+            if (data.brutos.length === 0) {
+                texto += "Nenhum arquivo encontrado nesta pasta.\n\n";
+            } else {
+                const groupsBrutos = groupFiles(data.brutos);
+                texto += `Identificamos ${groupsBrutos.length} conjunto(s) de dados brutos nesta pasta.\n\n`;
+            }
+
+            // ------------------ 3. DADOS PROCESSADOS ------------------
+            texto += "-------------------------------------------------------\n";
+            texto += " 3. DADOS PROCESSADOS (A Pasta Mais Importante!)\n";
+            texto += "-------------------------------------------------------\n";
+            texto += "Aqui estão os produtos finais. Estes são os arquivos prontos e ajustados que sua equipe irá utilizar no dia a dia.\n\n";
+
+            if (data.processados.length === 0) {
+                texto += "Nenhum arquivo processado encontrado nesta pasta.\n\n";
+            } else {
+                const groupsProcessados = groupFiles(data.processados);
+                const groupedBySub = {};
+                
+                groupsProcessados.forEach(g => {
+                    const sub = g.subfolder || "Arquivos Principais";
+                    if (!groupedBySub[sub]) groupedBySub[sub] = [];
+                    groupedBySub[sub].push(g);
+                });
+
+                for (const sub in groupedBySub) {
+                    if(sub !== "Arquivos Principais") {
+                        texto += `\n>> SUBPASTA: ${sub.toUpperCase()}\n`;
+                    }
+                    
+                    groupedBySub[sub].forEach(g => {
+                        const analysis = analyzeGroup(g);
+                        
+                        // Não printa blocos se o grupo for apenas suporte sem sentido (tratado pelas lógicas principais)
+                        if(!analysis.descricao) return; 
+
+                        let extsStr = g.exts.map(e => `.${e}`).join(", ");
+                        
+                        texto += `[Projeto] ${g.representativeName}\n`;
+                        texto += `  => Extensões: ${extsStr}\n`;
+                        texto += `  => O que é:   ${analysis.descricao}\n`;
+                        if (analysis.software) {
+                            texto += `  => Abrir no:  ${analysis.software}\n`;
+                        }
+
+                        // Tradução de Nomenclatura do Arquivo
+                        if (analysis.decoded.length > 0) {
+                            texto += `  => Detalhes identificados no nome:\n`;
+                            analysis.decoded.forEach(d => {
+                                texto += `     - ${d}\n`;
+                            });
+                        }
+
+                        // Notas de arquivos secundários e dicas
+                        if (analysis.notas.length > 0) {
+                            analysis.notas.forEach(n => {
+                                texto += `  => ${n}\n`;
+                            });
+                        }
+                        texto += `\n`;
+                    });
+                }
+            }
+
+            texto += "=======================================================\n";
+            texto += "Dica final: Em caso de lentidão ao abrir imagens .TIF gigantes, crie 'Pirâmides' (Pyramids) no seu software ou utilize os arquivos .ECW caso fornecidos.\n";
+            
+            // Atualizar UI
+            generatedText = texto;
+            previewText.value = texto;
+            
+            loadingIndicator.classList.add('hidden');
+            btnSelectFolder.classList.remove('hidden');
+            btnSelectFolder.innerHTML = '<i class="fas fa-folder-open text-xl"></i> Selecionar Outra Pasta';
+            resultArea.classList.remove('hidden');
+            
+            resultArea.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+
+        // Exportação de TXT
+        function downloadTxt() {
+            if (!generatedText) return;
+            const blob = new Blob([generatedText], { type: 'text/plain;charset=utf-8' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `README - Instruções - ${projectName}.txt`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        }
+
+        // Exportação de PDF Multilinha
+        function downloadPdf() {
+            if (!generatedText) return;
+            const { jsPDF } = window.jspdf;
+            const doc = new jsPDF();
+            
+            const margin = 15;
+            const maxLineWidth = doc.internal.pageSize.width - (margin * 2);
+            const textLines = doc.splitTextToSize(generatedText, maxLineWidth);
+            
+            let cursorY = margin;
+            const pageHeight = doc.internal.pageSize.height;
+            const lineHeight = 5;
+
+            for (let i = 0; i < textLines.length; i++) {
+                if (cursorY + lineHeight > pageHeight - margin) {
+                    doc.addPage();
+                    cursorY = margin;
+                }
+                
+                const line = textLines[i];
+                if (line.includes('===') || line.includes('---') || line.includes('GUIA DO PROJETO')) {
+                    doc.setFont("helvetica", "bold");
+                    doc.setTextColor(37, 99, 235); // Azul forte
+                } else if (line.startsWith(' 1.') || line.startsWith(' 2.') || line.startsWith(' 3.') || line.startsWith('>>') || line.startsWith('[Projeto]')) {
+                    doc.setFont("helvetica", "bold");
+                    doc.setTextColor(31, 41, 55); // Cinza escuro
+                } else if (line.includes('=> O que é:') || line.includes('=> Abrir no:') || line.includes('=> Detalhes') || line.includes('Atenção:') || line.includes('Nota:')) {
+                    doc.setFont("helvetica", "bold");
+                    doc.setTextColor(75, 85, 99); 
+                } else {
+                    doc.setFont("helvetica", "normal");
+                    doc.setTextColor(0, 0, 0); 
+                }
+
+                doc.text(line, margin, cursorY);
+                cursorY += lineHeight;
+            }
+            
+            doc.save(`README - Instruções - ${projectName}.pdf`);
+        }
+    </script>
+</body>
+</html>
