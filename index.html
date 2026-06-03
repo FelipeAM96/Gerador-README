@@ -154,13 +154,50 @@
 
             if (/\bnp\b/i.test(name) || n.includes("nuvem de pontos")) details.push("Produto: Nuvem de Pontos (Representação 3D densa).");
 
-            if (n.includes("worlddem neo")) details.push("Satélite/Fonte: WorldDEM Neo (Airbus)");
-            else if (n.includes("worlddem")) details.push("Satélite/Fonte: WorldDEM");
-            else if (n.includes("pleiades neo")) details.push("Satélite: Pléiades Neo");
-            else if (n.includes("pleiades") || n.includes("pléiades")) details.push("Satélite: Pléiades");
-            else if (n.includes("worldview")) details.push("Satélite: WorldView");
-            else if (n.includes("geoeye")) details.push("Satélite: GeoEye");
-            else if (n.includes("spot")) details.push("Satélite: SPOT");
+            // --- DETECÇÃO AVANÇADA DE SATÉLITES ---
+            const satelliteRules = [
+                { regex: /worlddem[\s-]*neo/i, name: "WorldDEM Neo" },
+                { regex: /worlddem/i, name: "WorldDEM" },
+                { regex: /pl[eé]iades[\s-]*neo/i, name: "Pléiades Neo" },
+                { regex: /pl[eé]iades/i, name: "Pléiades" },
+                { regex: /worldview[\s-]*([1-4])/i, name: "WorldView $1" },
+                { regex: /worldview/i, name: "WorldView" },
+                { regex: /spot[\s-]*([4-6])/i, name: "SPOT $1" },
+                { regex: /spot/i, name: "SPOT" },
+                { regex: /jilin/i, name: "Jilin" },
+                { regex: /eros[\s-]*b/i, name: "Eros B" },
+                { regex: /legion/i, name: "Legion" },
+                { regex: /kompsat[\s-]*(3a|3|2)/i, name: "Kompsat $1" },
+                { regex: /kompsat/i, name: "Kompsat" },
+                { regex: /beijin[g]?[\s-]*(3n3|3a)/i, name: "Beijing $1" },
+                { regex: /beijin[g]?/i, name: "Beijing" },
+                { regex: /geoeye/i, name: "GeoEye" },
+                { regex: /quickbird/i, name: "QuickBird" },
+                { regex: /planet/i, name: "Planet" },
+                { regex: /triplesat/i, name: "Triplesat" },
+                { regex: /superview/i, name: "SuperView" },
+                { regex: /skysat/i, name: "SkySat" },
+                { regex: /rapideye/i, name: "RapidEye" },
+                { regex: /gaofen[\s-]*(2)/i, name: "Gaofen $1" },
+                { regex: /gaofen/i, name: "Gaofen" },
+                { regex: /ikonos/i, name: "Ikonos" },
+                { regex: /blacksky/i, name: "BlackSky" },
+                { regex: /landsat[\s-]*([4578])/i, name: "Landsat $1" },
+                { regex: /landsat/i, name: "Landsat" },
+                { regex: /sentinel[\s-]*(2)/i, name: "Sentinel $1" },
+                { regex: /sentinel/i, name: "Sentinel" }
+            ];
+
+            for (let rule of satelliteRules) {
+                let match = n.match(rule.regex);
+                if (match) {
+                    let satName = rule.name;
+                    if (match[1]) satName = satName.replace('$1', match[1].toUpperCase());
+                    details.push(`Satélite/Fonte: ${satName}`);
+                    break;
+                }
+            }
+            // -------------------------------------
 
             let resMatch = name.match(/(\d+(?:,\d+)?\s*(?:cm|m(?:etros?)?))/i);
             if (resMatch) details.push(`Resolução: ${resMatch[1].toLowerCase()}`);
@@ -367,6 +404,7 @@
 
             texto += "=======================================================\n";
             texto += "Dica final: Em caso de lentidão ao abrir imagens .TIF gigantes, crie 'Pirâmides' (Pyramids) no seu software ou utilize os arquivos .ECW caso fornecidos.\n";
+            texto += "Atenção (.ECW): Por ser um formato de alta compressão de dados, arquivos .ECW são mais leves e rápidos, mas podem apresentar perda de qualidade visual em relação aos originais .TIF.\n";
             
             generatedText = texto;
             previewText.value = texto;
@@ -396,11 +434,17 @@
         // Exportação de PDF com Design Clean e Seguro (Sem Overflow)
         function downloadPdf() {
             if (!generatedText) return;
+            
+            // UX: Mostrar indicador de carregamento no botão
+            const originalBtnText = btnDownloadPdf.innerHTML;
+            btnDownloadPdf.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Gerando PDF...';
+            btnDownloadPdf.disabled = true;
+
             const { jsPDF } = window.jspdf;
             const doc = new jsPDF();
             
             const marginX = 20;
-            let cursorY = 25;
+            let cursorY = 25; 
             const pageWidth = doc.internal.pageSize.width;
             const pageHeight = doc.internal.pageSize.height;
             const maxLineWidth = pageWidth - (marginX * 2);
@@ -408,7 +452,7 @@
             const checkPageBreak = (neededSpace) => {
                 if (cursorY + neededSpace > pageHeight - 20) {
                     doc.addPage();
-                    cursorY = 25;
+                    cursorY = 25; 
                     return true;
                 }
                 return false;
@@ -522,6 +566,10 @@
             }
             
             doc.save(`README - Instruções - ${projectName}.pdf`);
+            
+            // Restaurar botão
+            btnDownloadPdf.innerHTML = originalBtnText;
+            btnDownloadPdf.disabled = false;
         }
     </script>
 </body>
