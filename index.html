@@ -51,13 +51,15 @@
                     <h2 class="text-xl font-bold text-gray-800"><i class="fas fa-eye text-green-500 mr-2"></i> Pré-visualização das Instruções</h2>
                     <div class="flex gap-3 w-full md:w-auto">
                         <button id="btnDownloadTxt" class="flex-1 md:flex-none bg-gray-800 hover:bg-gray-900 text-white py-2 px-4 rounded font-medium flex items-center justify-center gap-2 transition-colors">
-                            <i class="fas fa-file-alt"></i> Baixar .TXT
+                            <i class="fas fa-file-alt"></i> Salvar .TXT na Pasta
                         </button>
                         <button id="btnDownloadPdf" class="flex-1 md:flex-none bg-red-600 hover:bg-red-700 text-white py-2 px-4 rounded font-medium flex items-center justify-center gap-2 transition-colors">
-                            <i class="fas fa-file-pdf"></i> Baixar PDF Formatado
+                            <i class="fas fa-file-pdf"></i> Salvar PDF na Pasta
                         </button>
                     </div>
                 </div>
+                
+                <div id="saveStatus" class="hidden mb-4 p-3 bg-green-100 text-green-800 rounded-lg text-center font-medium shadow-sm transition-opacity"></div>
                 
                 <textarea id="previewText" class="w-full h-96 p-4 border border-gray-300 rounded-lg bg-gray-50 text-sm font-mono focus:ring-2 focus:ring-blue-500 focus:outline-none resize-y" spellcheck="false"></textarea>
             </div>
@@ -75,8 +77,51 @@
 
         let generatedText = "";
         let projectName = "Projeto";
+        let rootDirHandle = null; // Variável para armazenar o acesso à pasta mãe
 
-        btnSelectFolder.addEventListener('click', () => folderInput.click());
+        // Nova Lógica de Seleção de Pasta com permissão de Gravação
+        btnSelectFolder.addEventListener('click', async () => {
+            if (window.showDirectoryPicker) {
+                try {
+                    // Pede permissão de leitura e escrita na pasta
+                    rootDirHandle = await window.showDirectoryPicker({ mode: 'readwrite' });
+                    projectName = rootDirHandle.name;
+                    
+                    btnSelectFolder.classList.add('hidden');
+                    loadingIndicator.classList.remove('hidden');
+                    resultArea.classList.add('hidden');
+
+                    const files = [];
+                    await readDirectory(rootDirHandle, projectName, files);
+                    
+                    setTimeout(() => processFiles(files), 100);
+                } catch (err) {
+                    if (err.name !== 'AbortError') {
+                        console.warn("API de diretório falhou ou não suportada. Usando fallback clássico.", err);
+                        alert("Atenção: O navegador bloqueou o acesso direto à pasta (Isso acontece se estiver testando dentro da pré-visualização). O sistema usará o método tradicional. Para salvar direto na pasta, abra este arquivo HTML separadamente no Chrome/Edge.");
+                        rootDirHandle = null;
+                        folderInput.click(); // Fallback para input normal
+                    }
+                }
+            } else {
+                alert("Seu navegador não suporta gravação direta em pastas. O arquivo irá para a pasta Downloads. Recomendamos usar o Google Chrome.");
+                folderInput.click(); // Fallback para navegadores sem suporte
+            }
+        });
+
+        // Função recursiva para ler arquivos usando a nova API
+        async function readDirectory(dirHandle, path, filesList) {
+            for await (const entry of dirHandle.values()) {
+                if (entry.kind === 'file') {
+                    const file = await entry.getFile();
+                    file.customPath = path + '/' + entry.name;
+                    filesList.push(file);
+                } else if (entry.kind === 'directory') {
+                    await readDirectory(entry, path + '/' + entry.name, filesList);
+                }
+            }
+        }
+
         folderInput.addEventListener('change', handleFolderSelection);
         btnDownloadTxt.addEventListener('click', downloadTxt);
         btnDownloadPdf.addEventListener('click', downloadPdf);
@@ -89,6 +134,7 @@
             const files = event.target.files;
             if (files.length === 0) return;
 
+            rootDirHandle = null; // Garante que o handle seja nulo no fallback
             const firstFilePath = files[0].webkitRelativePath;
             projectName = firstFilePath.split('/')[0] || "Projeto";
 
@@ -291,7 +337,9 @@
                 const file = files[i];
                 if (file.name.startsWith('.')) continue;
 
-                const pathParts = file.webkitRelativePath.split('/');
+                // Usa o caminho da API nova (customPath) ou o caminho do input antigo (webkitRelativePath)
+                const pathToUse = file.customPath || file.webkitRelativePath || file.name;
+                const pathParts = pathToUse.split('/');
                 let belongsTo = null;
                 let subFolderName = "";
 
@@ -307,7 +355,7 @@
                 }
 
                 if (belongsTo) {
-                    projectData[belongsTo].push({ name: file.name, path: file.webkitRelativePath, subfolder: subFolderName });
+                    projectData[belongsTo].push({ name: file.name, path: pathToUse, subfolder: subFolderName });
                 }
             }
 
@@ -417,22 +465,48 @@
             resultArea.scrollIntoView({ behavior: 'smooth', block: 'start' });
         }
 
-        // Exportação de TXT
-        function downloadTxt() {
+        // Função de feedback na tela
+        function showSaveSuccess(message) {
+            const statusDiv = document.getElementById('saveStatus');
+            statusDiv.innerHTML = message;
+            statusDiv.classList.remove('hidden');
+            setTimeout(() => { statusDiv.classList.add('hidden'); }, 5000);
+        }
+
+        // Exportação de TXT com gravação direta na pasta
+        async function downloadTxt() {
             if (!generatedText) return;
+            const fileName = `README - Instruções - ${projectName}.txt`;
+
+            // Tenta salvar direto na pasta mãe se a permissão foi concedida
+            if (rootDirHandle) {
+                try {
+                    const fileHandle = await rootDirHandle.getFileHandle(fileName, { create: true });
+                    const writable = await fileHandle.createWritable();
+                    await writable.write(generatedText);
+                    await writable.close();
+                    showSaveSuccess(`<i class="fas fa-check-circle"></i> Arquivo TXT salvo com sucesso dentro da pasta mãe!`);
+                    return;
+                } catch (e) {
+                    console.error("Erro ao salvar direto na pasta, usando fallback.", e);
+                    alert("O navegador bloqueou a gravação direta na pasta. O arquivo será enviado para 'Downloads'.");
+                }
+            }
+
+            // Fallback (Download clássico do navegador)
             const blob = new Blob([generatedText], { type: 'text/plain;charset=utf-8' });
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = url;
-            a.download = `README - Instruções - ${projectName}.txt`;
+            a.download = fileName;
             document.body.appendChild(a);
             a.click();
             document.body.removeChild(a);
             URL.revokeObjectURL(url);
         }
 
-        // Exportação de PDF com Design Clean e Seguro (Sem Overflow)
-        function downloadPdf() {
+        // Exportação de PDF com gravação direta na pasta
+        async function downloadPdf() {
             if (!generatedText) return;
             
             // UX: Mostrar indicador de carregamento no botão
@@ -565,7 +639,29 @@
                 }
             }
             
-            doc.save(`README - Instruções - ${projectName}.pdf`);
+            const fileName = `README - Instruções - ${projectName}.pdf`;
+
+            // Tenta salvar direto na pasta mãe se a permissão foi concedida
+            if (rootDirHandle) {
+                try {
+                    const pdfBlob = doc.output('blob');
+                    const fileHandle = await rootDirHandle.getFileHandle(fileName, { create: true });
+                    const writable = await fileHandle.createWritable();
+                    await writable.write(pdfBlob);
+                    await writable.close();
+                    showSaveSuccess(`<i class="fas fa-check-circle"></i> Arquivo PDF salvo com sucesso dentro da pasta mãe!`);
+                    
+                    btnDownloadPdf.innerHTML = originalBtnText;
+                    btnDownloadPdf.disabled = false;
+                    return;
+                } catch (e) {
+                    console.error("Erro ao salvar direto na pasta, usando fallback.", e);
+                    alert("O navegador bloqueou a gravação direta na pasta. O arquivo PDF será enviado para 'Downloads'.");
+                }
+            }
+
+            // Fallback (Download clássico do navegador)
+            doc.save(fileName);
             
             // Restaurar botão
             btnDownloadPdf.innerHTML = originalBtnText;
